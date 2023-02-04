@@ -1,0 +1,5 @@
+library(tidyverse)
+library(trend)
+df = read.csv('D:/OneDrive/GitHub/statistic/Mann-Kendall/data.csv')
+y <- as.numeric(unlist(df['data']))
+sens.slope(as.vector(data$y), conf.level = 0.95)
