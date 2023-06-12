@@ -193,3 +193,126 @@ sens.slope(as.vector(data$y), conf.level = 0.95)
 ```
 
 ![image-20230202220940392](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230202220940392.png)
+
+# 方差分解分析变量筛选与显著性计算
+
+## 引言
+
+VPA中的方差分解是分析影响内生变量的结构冲击的贡献度。
+
+原理是自变量变化会对因变量产生贡献，利用方差分解分析VPA（Variance Partitioning Analysis）可以计算各自变量的贡献程度。
+
+在地球环境科学的实际应用中，可以基于VPA结果得出不同类型的环境因素（如何气候、土壤性质以及植物）对生物群落组成（如植被丰度，微生物群落）的解释程度。
+
+在 R 中进行方差分解同样离不开``vegan``包，主要依赖两个功能：
+
+1. 变量筛选``ordistep``
+2. 方差分解``varpart``
+
+## 变量筛选
+
+在进行任何多变量的分析，必须考虑变量之间存在的相关性。除了主成分分析，可以用RDA分析
+
+冗余分析（redundancy analysis，RDA）是一种回归分析结合主成分分析的排序方法，也是多响应变量（multiresponse）回归分析的拓展。从概念上讲，RDA是响应变量矩阵与解释变量之间多元多重线性回归的拟合值矩阵的PCA分析。
+
+代码如下：
+
+```
+library(vegan)
+library(tidyverse)
+data(mite)
+data(mite.env)
+data(mite.pcnm)
+rda_full <- rda(mite~., data = cbind(mite.pcnm, mite.env))
+rda_null <- rda(mite~1, data = cbind(mite.pcnm, mite.env))
+
+rda_back <- ordistep(rda_full, direction = 'backward',trace = 0)
+
+# forward selection
+rda_frwd <- ordistep(rda_null, formula(rda_full), direction = 'forward',trace = 0)
+
+# bothward selection 
+rda_both <- ordistep(rda_null, formula(rda_full), direction = 'both',trace = 0)
+```
+
+关于ordistep的说明文档可以见R的参考文档：https://rdrr.io/rforge/vegan/man/ordistep.html
+
+约束排序方法 ( `cca`, `rda`, `capscale`) 的自动逐步模型构建。该函数`ordistep`是仿照的`step`，可以使用排列测试进行前向、后向和逐步模型选择。对于由或创建的排序对象，函数`ordiR2step`仅对调整后的 *R2*和 P 值执行正向模型选择。 
+
+总体上，根据一系列“黑盒”操作，选择出主要的变量。
+
+结果如图，根据``rda_both``结果：
+
+![image-20230612193425435](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230612193425435.png)
+
+在``mite.env``因素中选择了``WatrCont``因子，在``mite.pcnm``因素中选择了``V2``和``V6``因子
+
+## 方差分解
+
+在进行VPA时，首先就要对这些环境因子进行一个分类，然后在约束其它类环境因子的情况下，对某一类环境因子进行排序分析，这种分析也成为偏分析，即partialRDA。
+
+在对每一类环境因子均进行偏分析之后，即可计算出每一个环境因子单独以及不同环境因子相互作用分别对生物群落变化的贡献。
+
+### 两类的情况
+
+首先是两类的情况，书接上文，把环境因子分为``mite.env``和``mite.pcnm``两类，即环境因子和空间相邻因子
+
+```
+df_env <- mite.env %>% select(WatrCont)
+df_pcnm <- mite.pcnm %>% select(V2, V6)
+
+# Perform variation partitioning analysis, the first variable is the community matrix
+# the second and third variables are climate variable set and soil property variable set
+vpt <- varpart(mite, df_env, df_pcnm)
+```
+
+格式是``varpart(因变量，第一类因子，第二类因子)``
+
+结果如图：
+
+![image-20230612194545183](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230612194545183.png)
+
+a为X1也就是环境因素单独对群落变化的贡献。
+
+b为X2也就是空间相邻因素对群落变化的贡献。
+
+c为X1和X2的相互作用对群落变化的贡献，这里是0
+
+d为X1和X2无法解释的群落变化。
+
+接下来绘韦恩图
+
+```
+plot(vpt, bg = 2:5, Xnames = c('env', 'pcnm'))
+```
+
+![image-20230612194653511](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230612194653511.png)
+
+环境因素解释了20%
+
+### 显著性计算
+
+接下来计算显著性
+
+```
+formula_env <- formula(mite ~ WatrCont + Condition(V2) + Condition(V6))
+formula_pcnm <- formula(mite ~ Condition(WatrCont) + V2 + V6)
+
+anova(rda(formula_env, data = cbind(mite.pcnm, mite.env)))
+anova(rda(formula_pcnm, data = cbind(mite.pcnm, mite.env)))
+```
+
+![image-20230612195215869](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230612195215869.png)
+
+单独计算环境因素和空间相邻因素的显著性，结果环境因素非常显著（p < 0.01），空间相邻因素比较显著 (p < 0.05)
+
+### 多类的情况
+
+```
+mod <- varpart(mite, ~ SubsDens + WatrCont, ~ Substrate + Shrub + Topo,
+               mite.pcnm, data=mite.env, transfo="hel")
+plot(mod, bg=2:4, Xnames = c('SubsDens + WatrCont', 'Substrate + Shrub + Topo', 'pcnm'))
+```
+
+![image-20230612195429454](https://imagecollection.oss-cn-beijing.aliyuncs.com/legion/image-20230612195429454.png)
+
